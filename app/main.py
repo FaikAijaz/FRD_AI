@@ -4,6 +4,8 @@ import os
 from app.assessment import assess_document
 from pydantic import BaseModel
 from app.clarification import generate_question
+from app.generation import generate_frd
+from app.scoring import score_frd
 
 # Temporary in-memory session (simple version)
 session_data = {}
@@ -58,3 +60,29 @@ def answer_question(req: AnswerRequest):
     return {
         "question": next_question
     }
+
+@app.post("/generate")
+def generate():
+    context = session_data.get("context", "")
+    answers = session_data.get("answers", [])
+
+    result = generate_frd(context, answers)
+
+    session_data["generated_frd"] = result
+
+    return result
+
+@app.post("/score")
+def score():
+    frd = session_data.get("generated_frd", {})
+
+    if not frd:
+        return {"error": "No FRD found. Generate first."}
+
+    frd_text = frd.get("frd_text", "")
+
+    result = score_frd(frd_text)
+
+    session_data["health_score"] = result
+
+    return result
