@@ -1,3 +1,5 @@
+import uuid
+import app.models
 from fastapi import FastAPI
 from dotenv import load_dotenv
 import os
@@ -6,15 +8,28 @@ from pydantic import BaseModel
 from app.clarification import generate_question
 from app.generation import generate_frd
 from app.scoring import score_frd
+import uuid
+
+
 
 # Temporary in-memory session (simple version)
-session_data = {}
+sessions= {}
 
 load_dotenv()
 app = FastAPI(title="AI FRDs Intelligence Engine")
 
 class DocumentRequest(BaseModel):
     text: str
+
+class AnswerRequest(BaseModel):
+    session_id: str
+    answer: str    
+
+class GenerateRequest(BaseModel):
+    session_id: str
+
+class ScoreRequest(BaseModel):
+    session_id: str
 
 @app.post("/assess")
 def assess(req: DocumentRequest):
@@ -25,56 +40,66 @@ def assess(req: DocumentRequest):
 def start_clarification(req: DocumentRequest):
     assessment = assess_document(req.text)
 
-    session_data["context"] = req.text
-    session_data["missing"] = assessment.get("missing_sections", [])
-    session_data["answers"] = []
-    session_data["question_count"] = 0
+    session_id = str(uuid.uuid4())
 
-    question = generate_question(req.text, session_data["missing"])
-
-    session_data["current_question"] = question
-
-    return {
-        "question": question
+    sessions[session_id] = {
+        "context": req.text,
+        "missing": assessment.get("missing_sections", []),
+        "answers": [],
+        "question_count": 0,
+        "generated_frd": {},
+        "health_score": {}
     }
 
-class AnswerRequest(BaseModel):
-    answer: str
+    question = generate_question(req.text, sessions[session_id]["missing"])
+
+    return {
+        "sessioin_id": session_id,
+        "question": question
+
+    }
+
 
 
 @app.post("/answer")
 def answer_question(req: AnswerRequest):
-    session_data["answers"].append(req.answer)
-    session_data["question_count"] += 1
+    session = sessions.get(req.session_id)
+    if not session:
+        return {"error": "Invalid session_id"}
+    
+    session["answers"].append(req.answer)
+    session["question_count"] += 1
 
-    # Stop condition
-    if session_data["question_count"] >= 5:
+    if session["question_count"] >= 5:
         return {"message": "Enough information collected. Ready for FRD generation."}
 
-    combined_context = session_data["context"] + "\n".join(session_data["answers"])
+    combined_context = session["context"] + "\n".join(session["answers"])
 
-    next_question = generate_question(combined_context, session_data["missing"])
-
-    session_data["current_question"] = next_question
+    next_question = generate_question(combined_context, session["missing"])
 
     return {
         "question": next_question
     }
 
 @app.post("/generate")
-def generate():
-    context = session_data.get("context", "")
-    answers = session_data.get("answers", [])
+def generate(req: GenerateRequest):
+    session=sessions.get(req.session_id)
+    if not session:
+        return {"error": "Invalid session_id"}
 
-    result = generate_frd(context, answers)
+    result = generate_frd(session["context"], session["answers"])
 
-    session_data["generated_frd"] = result
+    session["generated_frd"] = result
 
     return result
 
 @app.post("/score")
-def score():
-    frd = session_data.get("generated_frd", {})
+def score(req: ScoreRequest):
+    session=sessions.get(req.session_id)
+    if not session:     
+        return {"error": "Invalid session_id"}  
+         
+    frd = session.get("generated_frd", {})
 
     if not frd:
         return {"error": "No FRD found. Generate first."}
@@ -83,6 +108,6 @@ def score():
 
     result = score_frd(frd_text)
 
-    session_data["health_score"] = result
+    session["health_score"] = result
 
     return result
