@@ -1,40 +1,19 @@
 import uuid
-import app.models
 from fastapi import FastAPI
 from dotenv import load_dotenv
-import os
+
+from app.models import DocumentRequest, AnswerRequest, GenerateRequest, ScoreRequest
 from app.assessment import assess_document
-from pydantic import BaseModel
 from app.clarification import generate_question
 from app.generation import generate_frd
 from app.scoring import score_frd
-import uuid
 
-
-
-# Temporary in-memory session (simple version)
-sessions= {}
+# In-memory session store
+sessions = {}
 
 load_dotenv()
-app = FastAPI(title="AI FRDs Intelligence Engine")
+app = FastAPI(title="AI FRD Intelligence Engine")
 
-class DocumentRequest(BaseModel):
-    text: str
-
-class AnswerRequest(BaseModel):
-    session_id: str
-    answer: str    
-
-class GenerateRequest(BaseModel):
-    session_id: str
-
-class ScoreRequest(BaseModel):
-    session_id: str
-
-@app.post("/assess")
-def assess(req: DocumentRequest):
-    result = assess_document(req.text)
-    return result
 
 @app.post("/start_clarification")
 def start_clarification(req: DocumentRequest):
@@ -54,36 +33,42 @@ def start_clarification(req: DocumentRequest):
     question = generate_question(req.text, sessions[session_id]["missing"])
 
     return {
-        "sessioin_id": session_id,
+        "session_id": session_id,
         "question": question
-
     }
-
 
 
 @app.post("/answer")
 def answer_question(req: AnswerRequest):
     session = sessions.get(req.session_id)
+
     if not session:
         return {"error": "Invalid session_id"}
-    
+
     session["answers"].append(req.answer)
     session["question_count"] += 1
 
+    # Stop after 5 questions
     if session["question_count"] >= 5:
-        return {"message": "Enough information collected. Ready for FRD generation."}
+        return {
+            "done": True,
+            "message": "Enough information collected. Ready for FRD generation."
+        }
 
-    combined_context = session["context"] + "\n".join(session["answers"])
+    combined_context = session["context"] + "\n" + "\n".join(session["answers"])
 
     next_question = generate_question(combined_context, session["missing"])
 
     return {
+        "done": False,
         "question": next_question
     }
 
+
 @app.post("/generate")
 def generate(req: GenerateRequest):
-    session=sessions.get(req.session_id)
+    session = sessions.get(req.session_id)
+
     if not session:
         return {"error": "Invalid session_id"}
 
@@ -93,12 +78,14 @@ def generate(req: GenerateRequest):
 
     return result
 
+
 @app.post("/score")
 def score(req: ScoreRequest):
-    session=sessions.get(req.session_id)
-    if not session:     
-        return {"error": "Invalid session_id"}  
-         
+    session = sessions.get(req.session_id)
+
+    if not session:
+        return {"error": "Invalid session_id"}
+
     frd = session.get("generated_frd", {})
 
     if not frd:

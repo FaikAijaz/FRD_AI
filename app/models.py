@@ -1,13 +1,13 @@
-from pydantic.v1 import BaseModel
-
+from pydantic import BaseModel
+from typing import Optional
 
 
 class DocumentRequest(BaseModel):
     text: str
 
 class AnswerRequest(BaseModel):
-    session_id: str
-    answer: str    
+    answer: str
+    session_id: Optional[str] = None    
 
 class GenerateRequest(BaseModel):
     session_id: str
